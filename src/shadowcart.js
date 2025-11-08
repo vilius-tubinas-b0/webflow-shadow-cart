@@ -1,4 +1,4 @@
-/* shadowcart.umd.js */
+/* shadowcart.umd.js (with debug logging) */
 (function (global, factory) {
   typeof module === "object" && typeof module.exports === "object"
     ? module.exports = factory()
@@ -9,6 +9,7 @@
   // ---------- Config ----------
   const DEFAULTS = {
     storageKey: "shadow_cart",
+    debug: false, // default off, can be overridden via window.ShadowCartConfig
     selectors: {
       addBtn: "[data-add-to-cart]",
       qtyInput: "[data-cart-qty]",
@@ -26,7 +27,13 @@
     currency: { decimals: 2, locale: undefined }
   };
 
-  const cfg = merge({}, DEFAULTS, (globalThis && globalThis.ShadowCartConfig) || {});
+  const userCfg = (globalThis && globalThis.ShadowCartConfig) || {};
+  const cfg = merge({}, DEFAULTS, userCfg);
+
+  // Logger (respects debug switch)
+  function log(...args) {
+    if (cfg.debug) console.log("%c[ShadowCart]", "color:#7D5FFF;font-weight:bold;", ...args);
+  }
 
   // ---------- Utils ----------
   function merge(target, ...sources) {
@@ -45,12 +52,10 @@
   function money(val){ const n = Number(val||0); return isNaN(n) ? "0.00" : n.toLocaleString(cfg.currency.locale, { minimumFractionDigits: cfg.currency.decimals, maximumFractionDigits: cfg.currency.decimals }); }
   function keyFor(id, variant){ return `${String(id)}::${variant||""}`; }
   function closestQtyFor(btn){
-    // Prefer a sibling/ancestor qty input inside same "card"
     const card = btn.closest("[data-product-card]") || btn.parentElement;
     const inp = card ? card.querySelector(cfg.selectors.qtyInput) : null;
     const raw = (inp && (inp.value || inp.getAttribute("value"))) || btn.getAttribute("data-quantity");
-    const n = Math.max(1, parseInt(raw||"1",10) || 1);
-    return n;
+    return Math.max(1, parseInt(raw||"1",10) || 1);
   }
 
   // ---------- Core ----------
@@ -64,11 +69,11 @@
       if (this._inited) return;
       this._inited = true;
 
-      // Initial UI draw
+      log("Init:", this._items);
+
       this._notify();
       this._render();
 
-      // Auto-bind on DOM ready + on mutations
       const bind = () => { this._bindAddButtons(); this._render(); };
       if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", bind, { once: true });
@@ -89,16 +94,21 @@
     getSubtotal(){ return this._items.reduce((s,i)=>s+i.price*i.quantity,0); },
 
     add({ id, name, price, quantity=1, image="", variant="" }){
+      log("Add:", { id, name, price, quantity, image, variant });
+
       if (!id) return;
       const k = keyFor(id, variant);
       const found = this._items.find(i => keyFor(i.id,i.variant)===k);
       if (found) found.quantity += Number(quantity)||1;
       else this._items.push({ id, name, price:Number(price)||0, quantity:Number(quantity)||1, image, variant });
+
       save(cfg.storageKey, this._items);
       this._notify(); this._render();
     },
 
     setQuantity(id, variant, quantity){
+      log("SetQuantity:", { id, variant, quantity });
+
       const q = Math.max(0, parseInt(quantity||0,10));
       const k = keyFor(id, variant);
       const it = this._items.find(i => keyFor(i.id,i.variant)===k);
@@ -108,6 +118,8 @@
     },
 
     remove(id, variant=""){
+      log("Remove:", { id, variant });
+
       const k = keyFor(id, variant);
       this._items = this._items.filter(i => keyFor(i.id,i.variant)!==k);
       save(cfg.storageKey, this._items);
@@ -115,18 +127,24 @@
     },
 
     clear(){
+      log("Clear Cart");
       this._items = [];
       save(cfg.storageKey, this._items);
       this._notify(); this._render();
     },
 
     // ---------- Internal ----------
-    _notify(){ for (const fn of this._subs) { try { fn(this.getItems()); } catch {} } },
+    _notify(){
+      log("Notify subscribers");
+      for (const fn of this._subs) { try { fn(this.getItems()); } catch {} }
+    },
 
     _bindAddButtons(){
       document.querySelectorAll(cfg.selectors.addBtn).forEach(btn => {
         if (btn._shadowBound) return;
         btn._shadowBound = true;
+        log("Bind Add Button:", btn);
+
         btn.addEventListener("click", () => {
           const id = btn.dataset.productId || btn.getAttribute("data-product-id");
           const name = btn.dataset.productName || btn.getAttribute("data-product-name") || "";
@@ -134,8 +152,8 @@
           const image = btn.dataset.productImage || btn.getAttribute("data-product-image") || "";
           const variant = btn.dataset.variant || btn.getAttribute("data-variant") || "";
           const quantity = closestQtyFor(btn);
-          ShadowCart.add({ id, name, price, image, variant, quantity });
-          // Optional: open mini cart if you have a trigger
+          this.add({ id, name, price, image, variant, quantity });
+
           const trigger = document.querySelector("[data-cart-trigger]");
           if (trigger) try { trigger.click(); } catch {}
         });
@@ -143,25 +161,22 @@
     },
 
     _render(){
-      // Badge
+      log("Render UI");
+
       const count = this.getCount();
       document.querySelectorAll(cfg.selectors.count).forEach(el => { el.textContent = String(count); });
 
-      // Subtotal
       const subtotal = this.getSubtotal();
       document.querySelectorAll(cfg.selectors.subtotal).forEach(el => { el.textContent = money(subtotal); });
 
-      // Cart list with template
       const list = document.querySelector(cfg.selectors.cartList);
       if (!list) return;
 
       const tpl = list.querySelector(cfg.selectors.cartItemTemplate);
       if (!tpl) return;
 
-      // clear previous renders
       list.querySelectorAll("[data-cart-item-rendered]").forEach(el => el.remove());
 
-      // optional empty-state toggling
       const emptyEl = list.querySelector("[data-cart-empty]") || document.querySelector("[data-cart-empty]");
       if (emptyEl) emptyEl.style.display = this._items.length ? "none" : "";
 
@@ -170,7 +185,7 @@
         const node = tpl.cloneNode(true);
         node.removeAttribute("data-cart-item-template");
         node.setAttribute("data-cart-item-rendered", "");
-        node.style.display = ""; // ensure visible
+        node.style.display = "";
 
         const n = node.querySelector(cfg.selectors.itemName);  if (n) n.textContent = item.name || "";
         const v = node.querySelector(cfg.selectors.itemVar);   if (v) { v.textContent = item.variant || ""; v.style.display = item.variant ? "" : "none"; }
@@ -181,7 +196,6 @@
         const rem = node.querySelector(cfg.selectors.itemRemove);
         if (rem) rem.addEventListener("click", () => this.remove(item.id, item.variant||""));
 
-        // Optional per-item quantity controls if you add data attrs:
         const plus = node.querySelector("[data-cart-qty-plus]");
         const minus = node.querySelector("[data-cart-qty-minus]");
         if (plus) plus.addEventListener("click", () => this.setQuantity(item.id, item.variant||"", item.quantity + 1));
@@ -191,13 +205,10 @@
         running += item.price * item.quantity;
       }
 
-      // Update subtotals again in case template has dedicated spots inside list
       document.querySelectorAll(cfg.selectors.subtotal).forEach(el => { el.textContent = money(running); });
     }
   };
 
-  // Auto-init
   ShadowCart.init();
-
   return ShadowCart;
 });
