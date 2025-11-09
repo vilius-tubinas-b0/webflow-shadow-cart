@@ -79,8 +79,13 @@
         document.addEventListener("DOMContentLoaded", bind, { once: true });
       } else bind();
 
-      const mo = new MutationObserver(() => { this._bindAddButtons(); this._render(); });
-      mo.observe(document.documentElement, { childList: true, subtree: true });
+this._mo = new MutationObserver(() => {
+  log("DOM changed → re-bind & re-render once");
+  this._bindAddButtons();
+  this._render();
+});
+this._mo.observe(document.documentElement, { childList: true, subtree: true });
+
     },
 
     subscribe(fn){
@@ -160,21 +165,29 @@
       });
     },
 
-    _render(){
-      log("Render UI");
+_render(){
+  log("Render UI (safe)");
 
-      const count = this.getCount();
-      document.querySelectorAll(cfg.selectors.count).forEach(el => { el.textContent = String(count); });
+  // Pause observer to avoid recursive loops
+  if (this._mo) this._mo.disconnect();
 
-      const subtotal = this.getSubtotal();
-      document.querySelectorAll(cfg.selectors.subtotal).forEach(el => { el.textContent = money(subtotal); });
+  // Badge count
+  const count = this.getCount();
+  document.querySelectorAll(cfg.selectors.count).forEach(el => {
+    el.textContent = String(count);
+  });
 
-      const list = document.querySelector(cfg.selectors.cartList);
-      if (!list) return;
+  // Subtotal
+  const subtotal = this.getSubtotal();
+  document.querySelectorAll(cfg.selectors.subtotal).forEach(el => {
+    el.textContent = money(subtotal);
+  });
 
-      const tpl = list.querySelector(cfg.selectors.cartItemTemplate);
-      if (!tpl) return;
-
+  // Cart list
+  const list = document.querySelector(cfg.selectors.cartList);
+  if (list) {
+    const tpl = list.querySelector(cfg.selectors.cartItemTemplate);
+    if (tpl) {
       list.querySelectorAll("[data-cart-item-rendered]").forEach(el => el.remove());
 
       const emptyEl = list.querySelector("[data-cart-empty]") || document.querySelector("[data-cart-empty]");
@@ -207,6 +220,12 @@
 
       document.querySelectorAll(cfg.selectors.subtotal).forEach(el => { el.textContent = money(running); });
     }
+  }
+
+  // Re-enable observer after render
+  if (this._mo) this._mo.observe(document.documentElement, { childList: true, subtree: true });
+}
+
   };
 
   ShadowCart.init();
