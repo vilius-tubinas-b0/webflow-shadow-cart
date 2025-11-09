@@ -1,88 +1,80 @@
 (function () {
 
-  async function shopifyCheckout(items) {
-    const domain = window.SHOPIFY_STORE_DOMAIN;
-    if (!domain) {
-      console.error("[ShadowCart] Missing SHOPIFY_STORE_DOMAIN. Add to Webflow Head:");
-      console.error(`<script>window.SHOPIFY_STORE_DOMAIN = "yourstore.myshopify.com";</script>`);
+  async function createCheckout(items) {
+    const domain = window.SHOPIFY_STOREFRONT_DOMAIN;
+    const token = window.SHOPIFY_STOREFRONT_TOKEN;
+
+    if (!domain || !token) {
+      console.error("[ShadowCart] Missing SHOPIFY_STOREFRONT_DOMAIN or TOKEN");
       return;
     }
 
-    // 1) Clear Shopify cart
-    try {
-      await fetch(`https://${domain}/cart/clear.js`, {
-        method: "POST",
-        credentials: "include"
-      });
-    } catch (err) {
-      console.warn("[ShadowCart] cart clear failed (can be ignored on first run).", err);
-    }
+    const lineItems = items.map(i => ({
+      variantId: "gid://shopify/ProductVariant/" + i.id, // Storefront API expects Global IDs
+      quantity: i.quantity
+    }));
 
-    // 2) Add each item to Shopify cart
-    for (const item of items) {
-      try {
-        await fetch(`https://${domain}/cart/add.js`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: item.id,          // ✅ Shopify VARIANT ID
-            quantity: item.quantity
-          })
-        });
-      } catch (err) {
-        console.error("[ShadowCart] Failed adding item:", item, err);
+    const query = `
+      mutation CheckoutCreate($lineItems: [CheckoutLineItemInput!]!) {
+        checkoutCreate(input: { lineItems: $lineItems }) {
+          checkout {
+            webUrl
+          }
+          checkoutUserErrors {
+            message
+          }
+        }
       }
+    `;
+
+    const result = await fetch(`https://${domain}/api/2024-01/graphql.json`, {
+      method: "POST",
+      headers: {
+        "X-Shopify-Storefront-Access-Token": token,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ query, variables: { lineItems } })
+    }).then(r => r.json());
+
+    const url = result?.data?.checkoutCreate?.checkout?.webUrl;
+    if (!url) {
+      console.error("Checkout creation failed:", result);
+      return;
     }
 
-    // 3) Redirect to checkout (works universally)
-    window.location.href = `https://${domain}/checkout`;
+    window.location.href = url;
   }
 
-  // -----------------------------------------------------------
-  // Checkout Entire Cart
-  // -----------------------------------------------------------
   window.ShadowCartCheckout = function () {
     const items = ShadowCart.getItems();
     if (!items.length) {
       alert("Your cart is empty.");
       return;
     }
-    shopifyCheckout(items);
+    createCheckout(items);
   };
 
-  // -----------------------------------------------------------
-  // Buy Now (Single Item)
-  // -----------------------------------------------------------
-  window.ShadowCartBuyNow = function (opts) {
-    const id = opts.id;
-    if (!id) return console.error("[ShadowCartBuyNow] Missing product (variant) ID.");
-
-    const quantity = parseInt(opts.quantity || 1);
-    shopifyCheckout([{ id, quantity }]);
+  window.ShadowCartBuyNow = function ({ id, quantity = 1 }) {
+    createCheckout([{ id, quantity }]);
   };
 
-  // -----------------------------------------------------------
-  // Auto-bind Checkout Button:  <a data-checkout>
-  // -----------------------------------------------------------
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-checkout]");
-    if (!btn) return;
-    e.preventDefault();
-    window.ShadowCartCheckout();
+    if (btn) {
+      e.preventDefault();
+      ShadowCartCheckout();
+    }
   });
 
-  // -----------------------------------------------------------
-  // Auto-bind Buy Now: <a data-buy-now data-product-id="123">
-  // -----------------------------------------------------------
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-buy-now]");
-    if (!btn) return;
-    e.preventDefault();
-    window.ShadowCartBuyNow({
-      id: btn.dataset.productId,
-      quantity: parseInt(btn.dataset.quantity || "1")
-    });
+    if (btn) {
+      e.preventDefault();
+      ShadowCartBuyNow({
+        id: btn.dataset.productId,
+        quantity: parseInt(btn.dataset.quantity || "1")
+      });
+    }
   });
 
 })();
