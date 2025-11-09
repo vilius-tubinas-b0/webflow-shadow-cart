@@ -1,24 +1,42 @@
 (function () {
 
-  function buildShopifyCheckoutURL(items) {
-    if (!items || !items.length) return null;
-
-    // Must be full domain, set in Webflow Project Settings → Custom Code:
-    // <script>window.SHOPIFY_STORE_DOMAIN = "k0shdq-mm.myshopify.com";</script>
+  async function shopifyCheckout(items) {
     const domain = window.SHOPIFY_STORE_DOMAIN;
     if (!domain) {
-      console.error("[ShadowCart] Missing SHOPIFY_STORE_DOMAIN. Example:");
-      console.error(`window.SHOPIFY_STORE_DOMAIN = "your-store.myshopify.com"`);
-      return null;
+      console.error("[ShadowCart] Missing SHOPIFY_STORE_DOMAIN. Add to Webflow Head:");
+      console.error(`<script>window.SHOPIFY_STORE_DOMAIN = "yourstore.myshopify.com";</script>`);
+      return;
     }
 
-    // Build line items: variantId:qty,variantId:qty
-    const lineItems = items
-      .map(i => `${i.id}:${i.quantity}`)
-      .join(",");
+    // 1) Clear Shopify cart
+    try {
+      await fetch(`https://${domain}/cart/clear.js`, {
+        method: "POST",
+        credentials: "include"
+      });
+    } catch (err) {
+      console.warn("[ShadowCart] cart clear failed (can be ignored on first run).", err);
+    }
 
-    // ✅ Direct-to-checkout (no Shopify cart page)
-    return `https://${domain}/cart/${lineItems}?checkout=1`;
+    // 2) Add each item to Shopify cart
+    for (const item of items) {
+      try {
+        await fetch(`https://${domain}/cart/add.js`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: item.id,          // ✅ Shopify VARIANT ID
+            quantity: item.quantity
+          })
+        });
+      } catch (err) {
+        console.error("[ShadowCart] Failed adding item:", item, err);
+      }
+    }
+
+    // 3) Redirect to checkout (works universally)
+    window.location.href = `https://${domain}/checkout`;
   }
 
   // -----------------------------------------------------------
@@ -30,17 +48,18 @@
       alert("Your cart is empty.");
       return;
     }
-    const url = buildShopifyCheckoutURL(items);
-    if (url) window.location.href = url;
+    shopifyCheckout(items);
   };
 
   // -----------------------------------------------------------
-  // Buy Now (Single Item → Instant Checkout)
+  // Buy Now (Single Item)
   // -----------------------------------------------------------
-  window.ShadowCartBuyNow = function ({ id, name, price, quantity = 1, image = "", variant = "" }) {
-    if (!id) return console.error("[ShadowCart] BuyNow requires variant ID (data-product-id).");
-    const url = buildShopifyCheckoutURL([{ id, name, price, quantity, image, variant }]);
-    if (url) window.location.href = url;
+  window.ShadowCartBuyNow = function (opts) {
+    const id = opts.id;
+    if (!id) return console.error("[ShadowCartBuyNow] Missing product (variant) ID.");
+
+    const quantity = parseInt(opts.quantity || 1);
+    shopifyCheckout([{ id, quantity }]);
   };
 
   // -----------------------------------------------------------
@@ -54,20 +73,14 @@
   });
 
   // -----------------------------------------------------------
-  // Auto-bind Buy Now Button:
-  // <a data-buy-now data-product-id="123" data-product-price="29.99">
+  // Auto-bind Buy Now: <a data-buy-now data-product-id="123">
   // -----------------------------------------------------------
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-buy-now]");
     if (!btn) return;
     e.preventDefault();
-
     window.ShadowCartBuyNow({
       id: btn.dataset.productId,
-      name: btn.dataset.productName || "",
-      price: parseFloat(btn.dataset.productPrice || "0"),
-      image: btn.dataset.productImage || "",
-      variant: btn.dataset.variant || "",
       quantity: parseInt(btn.dataset.quantity || "1")
     });
   });
