@@ -77,7 +77,14 @@
     }
 
     log("Redirecting to:", cart.checkoutUrl);
-    window.location.href = cart.checkoutUrl;
+
+// Fire pixel event before leaving Webflow
+if (window.Pixel && typeof Pixel.checkoutStarted === "function") {
+  Pixel.checkoutStarted(items);
+}
+
+window.location.href = cart.checkoutUrl;
+
   }
 
   // Checkout whole cart

@@ -140,9 +140,20 @@ this._mo.observe(document.documentElement, { childList: true, subtree: true });
 
     // ---------- Internal ----------
     _notify(){
-      log("Notify subscribers");
-      for (const fn of this._subs) { try { fn(this.getItems()); } catch {} }
-    },
+  log("Notify subscribers");
+
+  const items = this.getItems();
+
+  // Notify UI subscribers
+  for (const fn of this._subs) {
+    try { fn(items); } catch {}
+  }
+
+  // NEW: send Pixel event
+  if (window.Pixel && typeof Pixel.cartUpdated === "function") {
+    Pixel.cartUpdated(items);
+  }
+},
 
     _bindAddButtons(){
       document.querySelectorAll(cfg.selectors.addBtn).forEach(btn => {
