@@ -15,26 +15,26 @@
     const token = window.SHOPIFY_STOREFRONT_TOKEN;
 
     if (!domain || !token) {
-      error("Missing SHOPIFY_STOREFRONT_DOMAIN or SHOPIFY_STOREFRONT_TOKEN.");
+      error("Missing SHOPIFY_STOREFRONT_DOMAIN or SHOPIFY_STOREFRONT_TOKEN");
       return;
     }
 
     const lineItems = items.map(i => ({
-      variantId: "gid://shopify/ProductVariant/" + i.id,
+      merchandiseId: `gid://shopify/ProductVariant/${i.id}`,
       quantity: i.quantity
     }));
 
-    log("Creating checkout with:", lineItems);
+    log("Creating cart with:", lineItems);
 
     const query = `
-      mutation CheckoutCreate($lineItems: [CheckoutLineItemInput!]!) {
-        checkoutCreate(input: { lineItems: $lineItems }) {
-          checkout {
-            webUrl
+      mutation CartCreate($lines: [CartLineInput!]!) {
+        cartCreate(input: { lines: $lines }) {
+          cart {
+            checkoutUrl
           }
-          checkoutUserErrors {
-            message
+          userErrors {
             field
+            message
           }
         }
       }
@@ -49,52 +49,49 @@
           "X-Shopify-Storefront-Access-Token": token,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ query, variables: { lineItems } })
+        body: JSON.stringify({
+          query,
+          variables: { lines: lineItems }
+        })
       }).then(r => r.json());
     } catch (err) {
-      error("Network failure while calling storefront API:", err);
-      return;
+      return error("Network error:", err);
     }
 
     log("Response:", result);
 
-    const checkoutData = result?.data?.checkoutCreate;
-    const checkoutUrl = checkoutData?.checkout?.webUrl;
+    const cart = result?.data?.cartCreate?.cart;
+    const userErrors = result?.data?.cartCreate?.userErrors;
 
-    if (!checkoutUrl) {
-      error("Checkout creation failed:");
-      error("Full GraphQL Response:", result);
-      error("Checkout User Errors:", checkoutData?.checkoutUserErrors || result?.errors);
+    if (userErrors && userErrors.length > 0) {
+      console.group("[ShadowCart Checkout USER ERRORS]");
+      userErrors.forEach((e, i) => console.log(`#${i + 1}`, e.message, e.field));
+      console.groupEnd();
       return;
     }
 
-    log("Redirecting to:", checkoutUrl);
-    window.location.href = checkoutUrl;
+    if (!cart?.checkoutUrl) {
+      error("No checkout URL returned.");
+      return;
+    }
+
+    log("Redirecting to:", cart.checkoutUrl);
+    window.location.href = cart.checkoutUrl;
   }
 
-  // ---------------------------------------------------------------------
-  // Checkout Entire Cart
-  // ---------------------------------------------------------------------
+  // Checkout whole cart
   window.ShadowCartCheckout = function () {
     const items = ShadowCart.getItems();
-    if (!items.length) {
-      alert("Your cart is empty.");
-      return;
-    }
+    if (!items.length) return alert("Your cart is empty.");
     createCheckout(items);
   };
 
-  // ---------------------------------------------------------------------
-  // Buy Now (Single Item)
-  // ---------------------------------------------------------------------
+  // Buy Now
   window.ShadowCartBuyNow = function ({ id, quantity = 1 }) {
-    if (!id) return error("Buy Now missing variant ID");
     createCheckout([{ id, quantity }]);
   };
 
-  // ---------------------------------------------------------------------
-  // Button Auto-Bind
-  // ---------------------------------------------------------------------
+  // Auto-bind checkout button
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-checkout]");
     if (btn) {
@@ -103,6 +100,7 @@
     }
   });
 
+  // Auto-bind buy-now button
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-buy-now]");
     if (btn) {
